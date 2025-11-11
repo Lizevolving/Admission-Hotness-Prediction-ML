@@ -41,7 +41,7 @@ def load_data(path):
 
 def feature_engineering(df):
     """
-    特征处理（简单透明）：
+    特征处理：
     1. 对部分数值做 log 转换，减少极端值影响
     2. 对类别变量做 one-hot（只保留必要的信息）
     3. 删除训练用不到的原始列，减少噪音

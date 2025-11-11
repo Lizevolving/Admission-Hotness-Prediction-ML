@@ -1,248 +1,312 @@
 # -*- coding: utf-8 -*-
 """
-Streamlit 应用 — 高校招生热度预测模型演示
-要求：与训练脚本保持一致：MODEL_PATH, COLUMNS_PATH, DATA_PATH, APP_TITLE 在 config.py 中定义
+高校招生报考热度分析与预测系统
+核心功能：检索+推荐
+输入：分数 + 感兴趣方向 → 输出：相关专业推荐 + 分数线预测
 """
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
-import json
-from pathlib import Path
 import warnings
 warnings.filterwarnings("ignore")
 
 from config import APP_TITLE, MODEL_PATH, COLUMNS_PATH, DATA_PATH
 
-st.set_page_config(page_title=APP_TITLE, page_icon="🎓", layout="wide")
+# 页面配置
+st.set_page_config(
+    page_title="高校招生报考热度预测系统", 
+    page_icon="🎓", 
+    layout="wide"
+)
 
-# -----------------------
-# 加载函数（使用缓存，提高速度）
-# -----------------------
+# 缓存加载
 @st.cache_data
-def load_model_and_columns(model_path=MODEL_PATH, cols_path=COLUMNS_PATH):
+def load_model_and_data():
+    """加载模型和数据"""
+    try:
+        model = joblib.load(MODEL_PATH)
+        feature_columns = joblib.load(COLUMNS_PATH)
+        df = pd.read_csv(DATA_PATH)
+        return model, feature_columns, df
+    except Exception as e:
+        st.error(f"加载失败: {e}")
+        return None, None, None
+
+def predict_score_and_hotness(model, feature_columns, df, score, category, province=None):
     """
-    加载模型和特征列。如果加载失败，返回 None。
+    核心预测功能：根据分数和方向预测分数线和热度
     """
     try:
-        model = joblib.load(model_path)
-        cols = joblib.load(cols_path)
-        return model, cols
-    except Exception as e:
-        return None, None
-
-@st.cache_data
-def load_data(path=DATA_PATH):
-    """
-    加载历史数据。如果加载失败，返回 None。
-    """
-    try:
-        df = pd.read_csv(path)
-        return df
-    except Exception as e:
-        return None
-
-def load_metrics(model_path=MODEL_PATH):
-    """
-    加载模型指标文件（.metrics.json）。如果不存在或加载失败，返回 None。
-    """
-    metrics_path = Path(model_path).with_suffix('.metrics.json')
-    if metrics_path.exists():
-        try:
-            with open(metrics_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except:
-            return None
-    return None
-
-# -----------------------
-# 输入处理：特征工程（与训练脚本相同）
-# -----------------------
-def feature_engineering_input(user_input: dict, feature_columns: list):
-    """
-    将用户输入转为模型需要的特征格式。
-    步骤：对数值列取对数（log1p），对分类列做 one-hot 编码（drop_first=True），然后对齐特征列（缺失填 0）。
-    """
-    df_in = pd.DataFrame([user_input])
-    # 对数变换（如果列存在）
-    for c in ['plan_quota', 'apply_num', 'min_score_rank']:
-        if c in df_in.columns:
-            df_in[f'log_{c}'] = np.log1p(df_in[c].astype(float))
-
-    # One-hot 编码（对分类列）
-    categorical = [c for c in ['province', 'school_tier', 'category'] if c in df_in.columns]
-    if categorical:
-        df_enc = pd.get_dummies(df_in, columns=categorical, drop_first=True)
-    else:
-        df_enc = df_in.copy()
-
-    # 删除原始数值列（与训练一致）
-    for drop_col in ['school_name', 'major_name', 'plan_quota', 'apply_num', 'min_score_rank']:
-        if drop_col in df_enc.columns:
-            df_enc = df_enc.drop(columns=[drop_col])
-
-    # 对齐特征列（缺失填 0）
-    aligned = pd.DataFrame(columns=feature_columns)
-    for col in feature_columns:
-        aligned.loc[0, col] = df_enc[col].iloc[0] if col in df_enc.columns else 0
-    aligned = aligned.fillna(0)
-    return aligned.astype(float)
-
-# -----------------------
-# 辅助函数：用分数估算排名（基于历史数据）
-# -----------------------
-def estimate_rank_from_score(df, score):
-    """
-    用历史数据估算排名：找分数最近的 10 个样本，取排名中位数。
-    如果数据缺少相关列，返回 None。
-    """
-    if 'min_score' not in df.columns or 'min_score_rank' not in df.columns:
-        return None
-    df_score = df[['min_score', 'min_score_rank']].copy().dropna()
-    if df_score.empty:
-        return None
-    df_score['abs_diff'] = (df_score['min_score'] - score).abs()
-    k = min(10, len(df_score))
-    nearest = df_score.nsmallest(k, 'abs_diff')
-    est_rank = int(nearest['min_score_rank'].median())
-    return est_rank
-
-# -----------------------
-# 辅助函数：推荐相似样本（按热度差距）
-# -----------------------
-def recommend_similar(df, school_tier, category, target_hotness, top_k=5):
-    """
-    从历史数据中找相似样本：相同学校层次和科类，按热度差距排序，取前 5 个。
-    如果没有热度列，就返回前 5 个匹配样本。
-    """
-    filt = df.copy()
-    if 'school_tier' in df.columns:
-        filt = filt[filt['school_tier'] == school_tier]
-    if 'category' in df.columns:
-        filt = filt[filt['category'] == category]
-    if filt.empty:
-        return pd.DataFrame()
-    if 'hotness_index' in filt.columns:
-        filt['hotness_diff'] = (filt['hotness_index'] - target_hotness).abs()
-        return filt.nsmallest(top_k, 'hotness_diff')[['school_name','major_name','hotness_index','plan_quota','apply_num']].reset_index(drop=True)
-    else:
-        return filt.head(top_k)[['school_name','major_name','plan_quota','apply_num']].reset_index(drop=True)
-
-# -----------------------
-# 主函数：应用界面
-# -----------------------
-def main():
-    st.title("🎓 高校招生热度预测模型演示")
-    st.write("这个应用展示如何用简单输入测试模型。输入参数，运行预测，查看结果。重点：了解模型流程和特征处理。")
-
-    # 加载模型、数据和指标
-    model, feature_columns = load_model_and_columns()
-    df = load_data()
-    metrics = load_metrics()
-
-    if model is None or feature_columns is None or df is None:
-        st.error("模型或数据加载失败。请检查 config.py 中的路径设置，并确保模型已训练并保存。")
-        st.stop()
-
-    # 侧栏：输入参数
-    st.sidebar.header("输入参数")
-    input_mode = st.sidebar.radio("选择输入方式", ("直接输入最低排名（推荐）", "用分数估算排名（如果有分数数据）"))
-
-    year = st.sidebar.selectbox("年份", options=sorted(df['year'].unique()) if 'year' in df.columns else [2025], index=0)
-    province = st.sidebar.selectbox("省份", options=sorted(df['province'].unique()) if 'province' in df.columns else ["北京"])
-    school_tier = st.sidebar.selectbox("学校层次", options=sorted(df['school_tier'].unique()) if 'school_tier' in df.columns else ["普通本科"])
-    category = st.sidebar.selectbox("科类", options=sorted(df['category'].unique()) if 'category' in df.columns else ["工学"])
-
-    plan_quota = st.sidebar.number_input("计划招生人数 (plan_quota)", min_value=1, value=100)
-    apply_num = st.sidebar.number_input("报考人数 (apply_num)", min_value=1, value=1000)
-
-    if input_mode == "直接输入最低排名（推荐）":
-        min_score_rank = st.sidebar.number_input("最低录取分排名 (min_score_rank)", min_value=1, value=50000)
-    else:
-        score = st.sidebar.number_input("最低录取分数 (min_score) - 用于估算排名", min_value=0, max_value=750, value=550)
-        est_rank = estimate_rank_from_score(df, score)
-        if est_rank is None:
-            st.sidebar.warning("无法用历史数据估算排名。请直接输入排名。")
-            min_score_rank = st.sidebar.number_input("最低录取分排名 (min_score_rank)", min_value=1, value=50000)
+        # 筛选相同科类的历史数据
+        category_data = df[df['category'] == category].copy()
+        
+        if province:
+            category_data = category_data[category_data['province'] == province]
+        
+        if category_data.empty:
+            return pd.DataFrame()
+        
+        # 计算该科类的分数线范围
+        if 'min_score' in category_data.columns:
+            score_stats = category_data['min_score'].describe()
+            recommended_score_range = (score_stats['25%'], score_stats['75%'])
         else:
-            st.sidebar.info(f"基于历史数据估算的排名: {est_rank}")
-            min_score_rank = est_rank
+            recommended_score_range = (score - 20, score + 20)
+        
+        # 为每个专业预测热度
+        recommendations = []
+        
+        for _, school_major_info in category_data.iterrows():
+            # 构造预测输入
+            user_input = {
+                'year': 2024,
+                'province': school_major_info.get('province', '北京'),
+                'school_tier': school_major_info.get('school_tier', '普通本科'),
+                'category': category,
+                'plan_quota': school_major_info.get('plan_quota', 100),
+                'apply_num': school_major_info.get('apply_num', 1000),
+                'min_score_rank': estimate_rank_from_score(df, score)
+            }
+            
+            # 预测热度
+            predicted_hotness = predict_single_hotness(model, feature_columns, user_input)
+            
+            # 预测分数线（基于历史数据 + 热度调整）
+            historical_score = school_major_info.get('min_score', score)
+            score_adjustment = (predicted_hotness - 5) * 2  # 热度影响分数
+            predicted_score = max(0, historical_score + score_adjustment)
+            
+            recommendations.append({
+                'school_name': school_major_info.get('school_name', '未知大学'),
+                'major_name': school_major_info.get('major_name', '未知专业'),
+                'province': school_major_info.get('province', '未知'),
+                'school_tier': school_major_info.get('school_tier', '普通本科'),
+                'historical_score': historical_score,
+                'predicted_score': round(predicted_score, 1),
+                'predicted_hotness': round(predicted_hotness, 2),
+                'match_score': calculate_match_score(score, predicted_score),
+                'competition_level': get_competition_level(predicted_hotness)
+            })
+        
+        # 转换为DataFrame并排序
+        rec_df = pd.DataFrame(recommendations)
+        if not rec_df.empty:
+            # 按匹配度和热度综合排序
+            rec_df['sort_score'] = rec_df['match_score'] * 0.6 + (10 - rec_df['predicted_hotness']) * 0.4
+            rec_df = rec_df.sort_values('sort_score', ascending=False)
+        
+        return rec_df, recommended_score_range
+        
+    except Exception as e:
+        st.error(f"预测错误: {e}")
+        return pd.DataFrame(), (0, 750)
 
-    # 预测按钮
-    if st.sidebar.button("🔮 运行预测"):
-        user_input = {
-            'year': year,
-            'province': province,
-            'school_tier': school_tier,
-            'category': category,
-            'plan_quota': plan_quota,
-            'apply_num': apply_num,
-            'min_score_rank': min_score_rank
-        }
-        try:
-            X_aligned = feature_engineering_input(user_input, feature_columns)
-            pred = float(model.predict(X_aligned)[0])
+def estimate_rank_from_score(df, score):
+    """根据分数估算排名"""
+    try:
+        if 'min_score' not in df.columns or 'min_score_rank' not in df.columns:
+            return 50000
+        
+        df_score = df[['min_score', 'min_score_rank']].copy().dropna()
+        if df_score.empty:
+            return 50000
+        
+        df_score['abs_diff'] = (df_score['min_score'] - score).abs()
+        nearest = df_score.nsmallest(min(5, len(df_score)), 'abs_diff')
+        return int(nearest['min_score_rank'].median())
+    except:
+        return 50000
 
-            # 显示结果
-            c1, c2, c3 = st.columns([1,1,1])
-            with c1:
-                st.metric("预测热度指数", f"{pred:.2f}")
-            with c2:
-                st.metric("报考竞争比", f"{apply_num / max(plan_quota,1):.1f}:1")
-            with c3:
-                difficulty = "高" if min_score_rank < 10000 else "中" if min_score_rank < 50000 else "低"
-                st.metric("录取难度（估计）", difficulty)
+def predict_single_hotness(model, feature_columns, user_input):
+    """预测单个热度的辅助函数"""
+    try:
+        df_input = pd.DataFrame([user_input])
+        
+        # 特征工程
+        df_input['log_plan_quota'] = np.log1p(df_input['plan_quota'])
+        df_input['log_apply_num'] = np.log1p(df_input['apply_num'])
+        df_input['log_min_score_rank'] = np.log1p(df_input['min_score_rank'])
+        
+        # One-hot编码
+        categorical_features = ['province', 'school_tier', 'category']
+        df_encoded = pd.get_dummies(df_input, columns=categorical_features, drop_first=True)
+        
+        # 移除不需要的特征
+        features_to_remove = ['school_name', 'major_name', 'plan_quota', 'apply_num', 'min_score_rank']
+        for feature in features_to_remove:
+            if feature in df_encoded.columns:
+                df_encoded = df_encoded.drop(feature, axis=1)
+        
+        # 对齐特征列
+        df_aligned = df_encoded.reindex(columns=feature_columns, fill_value=0)
+        
+        # 预测
+        return model.predict(df_aligned)[0]
+    except:
+        return 5.0  # 默认中等热度
 
-            # 输入详情
-            st.markdown("### 输入参数详情")
-            st.table(pd.DataFrame({
-                "参数": ["年份","省份","学校层次","科类","计划招生","报考人数","最低排名"],
-                "值": [f"{year}年", province, school_tier, category, f"{plan_quota}人", f"{apply_num}人", f"第{min_score_rank}名"]
-            }))
-
-            # 相似样本
-            st.markdown("### 相似样本推荐")
-            recs = recommend_similar(df, school_tier, category, pred, top_k=5)
-            if not recs.empty:
-                st.dataframe(recs, use_container_width=True)
-            else:
-                st.info("未找到相似样本。")
-
-            # 导出结果
-            if st.button("⬇️ 导出结果（CSV）"):
-                out_df = pd.DataFrame([{
-                    'year': year, 'province': province, 'school_tier': school_tier,
-                    'category': category, 'plan_quota': plan_quota, 'apply_num': apply_num,
-                    'min_score_rank': min_score_rank, 'predicted_hotness': pred
-                }])
-                st.download_button("下载 CSV", out_df.to_csv(index=False, encoding='utf-8-sig'), file_name="prediction.csv", mime="text/csv")
-
-        except Exception as e:
-            st.error(f"预测出错: {e}")
-
-    # 侧栏：模型指标
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### 模型指标（从训练保存）")
-    if metrics:
-        st.sidebar.write(f"CV R² 平均: **{metrics.get('cv_r2_mean','-')}**")
-        st.sidebar.write(f"CV R² 标准差: **{metrics.get('cv_r2_std','-')}**")
-        if 'test_metrics' in metrics:
-            st.sidebar.write("测试集指标：")
-            for k,v in metrics['test_metrics'].items():
-                st.sidebar.write(f"- {k}: **{v:.4f}**")
+def calculate_match_score(user_score, predicted_score):
+    """计算匹配分数"""
+    score_diff = abs(user_score - predicted_score)
+    if score_diff <= 10:
+        return 100
+    elif score_diff <= 20:
+        return 80
+    elif score_diff <= 30:
+        return 60
     else:
-        st.sidebar.info("未找到指标文件。可能训练脚本未保存 .metrics.json。")
+        return 40
 
-    # 页脚说明
+def get_competition_level(hotness):
+    """获取竞争程度"""
+    if hotness > 7:
+        return "非常激烈"
+    elif hotness > 5:
+        return "激烈"
+    elif hotness > 3:
+        return "中等"
+    else:
+        return "一般"
+
+def main():
+    """主函数"""
+    # 标题
+    st.title("🎓 高校招生报考热度分析与预测系统")
     st.markdown("---")
-    st.markdown("#### 使用说明")
+    
+    # 简洁说明
     st.markdown("""
-    - 这个应用用于测试模型：输入参数（年份、省份、层次、科类、计划招生、报考人数、最低排名），运行预测，查看热度指数。
-    - 要提升准确性：在训练脚本中使用 K-fold 交叉验证，检查数据泄露，并调整特征（训练脚本已有这些步骤）。
-    - 运行方式：用 Streamlit 命令启动，逐步输入参数，观察模型输出。
+    ### 📖 系统功能
+    基于机器学习技术，根据你的**高考分数**和**兴趣方向**，为你推荐合适的专业，并预测录取分数线。
+    
+    ✅ **输入简单**：只需分数+兴趣方向  
+    ✅ **智能推荐**：基于历史数据和AI预测  
+    ✅ **分数线预测**：预测各专业录取分数  
     """)
-    st.write("—— 专注模型测试。")
+    
+    # 加载模型和数据
+    model, feature_columns, df = load_model_and_data()
+    
+    if model is None:
+        st.error("系统加载失败，请稍后重试")
+        st.stop()
+    
+    # 主要输入区域
+    st.markdown("### 📝 请输入你的信息")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        score = st.number_input(
+            "🎯 你的高考分数", 
+            min_value=0, 
+            max_value=750, 
+            value=500,
+            help="请输入你的高考总分（满分750分）"
+        )
+    
+    with col2:
+        category_options = sorted(df['category'].unique()) if df is not None and 'category' in df.columns else ['理科', '文科', '工科']
+        category = st.selectbox(
+            "📚 感兴趣的科类", 
+            options=category_options,
+            help="选择你感兴趣的专业科类"
+        )
+    
+    with col3:
+        province_options = ['全部省份'] + (sorted(df['province'].unique()) if df is not None and 'province' in df.columns else [])
+        province = st.selectbox(
+            "🗺️ 目标省份（可选）", 
+            options=province_options,
+            help="选择你希望上大学的省份，不选择则查看全国"
+        )
+    
+    # 预测按钮
+    if st.button("🔮 开始推荐专业", type="primary", use_container_width=True):
+        st.markdown("---")
+        st.markdown("### 📊 推荐结果")
+        
+        # 处理省份选择
+        selected_province = None if province == '全部省份' else province
+        
+        # 获取推荐
+        recommendations, score_range = predict_score_and_hotness(
+            model, feature_columns, df, score, category, selected_province
+        )
+        
+        if recommendations.empty:
+            st.warning("抱歉，没有找到符合条件的专业推荐。请尝试其他科类或调整分数。")
+            return
+        
+        # 显示分数范围分析
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("🎯 你的分数", f"{score}分")
+        
+        with col2:
+            st.metric("📈 匹配专业数量", f"{len(recommendations)}个")
+        
+        with col3:
+            if score_range[0] <= score <= score_range[1]:
+                match_status = "✅ 匹配良好"
+            else:
+                match_status = "⚠️ 需要调整"
+            st.metric("💯 分数匹配度", match_status)
+        
+        # 显示推荐专业列表
+        st.markdown("### 🏫 推荐专业列表")
+        st.markdown(f"根据你的**{score}分**和**{category}**方向，为你推荐以下专业：")
+        
+        # 格式化显示数据
+        display_data = []
+        for _, row in recommendations.iterrows():
+            display_data.append({
+                '🏫 学校': row['school_name'],
+                '📚 专业': row['major_name'],
+                '📍 地区': row['province'],
+                '🎓 层次': row['school_tier'],
+                '📊 历史分数': f"{row['historical_score']}分",
+                '🔮 预测分数': f"{row['predicted_score']}分",
+                '🔥 热度指数': f"{row['predicted_hotness']}/10",
+                '⚡ 竞争程度': row['competition_level'],
+                '💯 匹配度': f"{row['match_score']}%"
+            })
+        
+        display_df = pd.DataFrame(display_data)
+        
+        # 显示表格
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+        
+        # 提供下载功能
+        if st.button("📥 下载推荐结果", use_container_width=True):
+            csv_data = recommendations.to_csv(index=False, encoding='utf-8-sig')
+            st.download_button(
+                label="下载 CSV 文件",
+                data=csv_data,
+                file_name=f"专业推荐_{score}分_{category}.csv",
+                mime="text/csv"
+            )
+        
+        # 显示分析说明
+        st.markdown("---")
+        st.markdown("### 📋 分析说明")
+        st.markdown(f"""
+        - **预测分数线**：基于历史录取数据和AI模型预测，实际录取分数可能有所浮动
+        - **热度指数**：反映该专业的报考竞争激烈程度（0-10分，分数越高竞争越激烈）
+        - **匹配度**：你的分数与预测分数的匹配程度，越高越适合报考
+        - **推荐排序**：综合考虑匹配度和竞争程度，优先推荐最适合的专业
+        """)
+    
+    # 页脚
+    st.markdown("---")
+    st.markdown("""
+    <div style='text-align: center; color: #666;'>
+    🎓 高校招生报考热度分析与预测系统 | 基于机器学习技术 | 为高考生提供智能专业推荐
+    </div>
+    """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
