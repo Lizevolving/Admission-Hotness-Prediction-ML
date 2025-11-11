@@ -1,0 +1,110 @@
+{
+  "cv_r2_mean": 0.901882900173808,
+  "cv_r2_std": 0.01553415474140768,
+  "baseline_cv_r2_mean": -0.008361896157614712,
+  "baseline_cv_r2_std": 0.008808406357373927,
+  "test_metrics": {
+    "mse": 0.6658852550066293,
+    "rmse": 0.8160179256650122,
+    "mae": 0.5006616229228333,
+    "r2": 0.8754837565552734
+  },
+  "dropped_features": [
+    "log_min_score_rank",
+    "min_score"
+  ],
+  "top_permutation_importance": [
+    {
+      "feature": "school_tier_985",
+      "perm_importance_mean": 0.42342253978114996,
+      "perm_importance_std": 0.05973875677808908
+    },
+    {
+      "feature": "log_apply_num",
+      "perm_importance_mean": 0.3662402477204378,
+      "perm_importance_std": 0.06607717904324158
+    },
+    {
+      "feature": "log_plan_quota",
+      "perm_importance_mean": 0.09278948479702315,
+      "perm_importance_std": 0.02749317007636801
+    },
+    {
+      "feature": "school_tier_普通本科",
+      "perm_importance_mean": 0.07568297130991035,
+      "perm_importance_std": 0.02321375943683816
+    },
+    {
+      "feature": "category_工学",
+      "perm_importance_mean": 0.018904045932741587,
+      "perm_importance_std": 0.018198315559573925
+    },
+    {
+      "feature": "category_医学",
+      "perm_importance_mean": 0.007531011682513899,
+      "perm_importance_std": 0.008255023940525833
+    },
+    {
+      "feature": "category_经济学",
+      "perm_importance_mean": 0.006119549609304114,
+      "perm_importance_std": 0.00390878480558864
+    },
+    {
+      "feature": "province_北京",
+      "perm_importance_mean": 0.0005043468166221865,
+      "perm_importance_std": 0.00046957520055852195
+    },
+    {
+      "feature": "category_法学",
+      "perm_importance_mean": 0.00031782394727437603,
+      "perm_importance_std": 0.0007900129277529211
+    },
+    {
+      "feature": "province_天津",
+      "perm_importance_mean": 0.0002740417882274693,
+      "perm_importance_std": 0.00029787352657659134
+    }
+  ],
+  "top_feature_importance": [
+    {
+      "feature": "school_tier_985",
+      "importance": 0.5956150045146777
+    },
+    {
+      "feature": "log_apply_num",
+      "importance": 0.1846606718915947
+    },
+    {
+      "feature": "category_工学",
+      "importance": 0.0742943771590591
+    },
+    {
+      "feature": "school_tier_普通本科",
+      "importance": 0.05640223157921613
+    },
+    {
+      "feature": "log_plan_quota",
+      "importance": 0.038776183597927096
+    },
+    {
+      "feature": "category_医学",
+      "importance": 0.0242501399195562
+    },
+    {
+      "feature": "category_经济学",
+      "importance": 0.007757127633839399
+    },
+    {
+      "feature": "year",
+      "importance": 0.007624691497336838
+    },
+    {
+      "feature": "category_法学",
+      "importance": 0.0019185308462580306
+    },
+    {
+      "feature": "province_湖南",
+      "importance": 0.0013176457029625667
+    }
+  ]
+}

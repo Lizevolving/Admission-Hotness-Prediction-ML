@@ -9,10 +9,9 @@ from pathlib import Path
 
 # --- 核心路径定义 (使用 pathlib 保证跨平台兼容性) ---
 BASE_DIR = Path(__file__).resolve().parent
-DATA_PATH = BASE_DIR / "data/admissions.csv"
-MODEL_DIR = BASE_DIR / "models"
-MODEL_PATH = MODEL_DIR / "admissions_model.pkl"
-COLUMNS_PATH = MODEL_DIR / "feature_columns.pkl"
+DATA_PATH = BASE_DIR / "admissions.csv"
+MODEL_PATH = BASE_DIR / "admissions_model.pkl"
+COLUMNS_PATH = BASE_DIR / "feature_columns.pkl"
 
 # --- 模型超参数 ---
 MODEL_PARAMS = {
